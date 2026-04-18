@@ -1,0 +1,17 @@
+# Build output
+/target/
+
+# Rust/Cargo
+**/*.rs.bk
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Env / secrets
+.env
+.env.*
