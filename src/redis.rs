@@ -19,13 +19,6 @@ impl Redis {
         self.map.get(key)
     }
 
-    pub fn update(&mut self, key: &str, value: &str) {
-        self.map
-        .entry(key.to_string())
-        .and_modify(|v| *v = value.to_string())
-        .or_insert(value.to_string());
-    }
-
     pub fn remove(&mut self, key: &str) {
         self.map.remove(key);
     }

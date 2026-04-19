@@ -31,44 +31,65 @@ impl Server {
                         match reader.read_line(&mut line) {
                             Ok(size) if size > 0 => {
                                 let msg = line.trim();
+                                
+                                if msg.is_empty() {
+                                    continue;
+                                }
+
                                 println!("[+] Received: {}", msg);
 
                                 let parts: Vec<&str> = msg.split_whitespace().collect();
                                 
-                                match parts[0].to_uppercase().as_str() {
-                                    "GET" => {
-                                        let response = self.map
-                                        .get(parts[1])
-                                        .map(|v| v.as_str())
-                                        .unwrap_or("No record found!");
+                                match parts.get(0).map(|s| s.to_uppercase()) {
+                                    Some(cmd) => match cmd.as_str() {
+                                        "GET" => {
+                                            if let Some(key) = parts.get(1) {
+                                                let response = self.map
+                                                .get(key)
+                                                .map(|v| v.as_str())
+                                                .unwrap_or("No record found!");
+                                                
+                                                let formatted = format!("{}\n", response);
 
-                                        stream.write_all(response.as_bytes()).unwrap();
-                                    },
-                                    "SET" => {
-                                        self.map
-                                        .set(
-                                            parts[1].to_lowercase().as_str(),
-                                            parts[2].to_lowercase().as_str()
-                                        );
+                                                stream.write_all(formatted.as_bytes()).unwrap();
+                                            } else {
+                                                stream.write_all("Error: Missing key\n".as_bytes()).unwrap();
+                                            }
+                                        },
+                                        "SET" => {
+                                            if let (Some(key), Some(value)) = (parts.get(1), parts.get(2)) {
+                                                self.map.set(
+                                                    key,
+                                                    value
+                                                );
 
-                                        stream.write_all("Value added successfully!".as_bytes()).unwrap();
+                                                stream.write_all("Value added successfully!".as_bytes()).unwrap();
+                                            } else {
+                                                stream.write_all("Error: Missing key or value\n".as_bytes()).unwrap();
+                                            }
+                                        },
+                                        "DELETE" => {
+                                            if let Some(key) = parts.get(1) {
+                                                self.map.remove(key);
+
+                                                stream.write_all("Value deleted successfully!".as_bytes()).unwrap();
+                                            } else {
+                                                stream.write_all("Error: Missing key\n".as_bytes()).unwrap();
+                                            }
+                                        },
+                                        _ => stream.write_all("Unknown command".as_bytes()).unwrap()
                                     },
-                                    "UPDATE" => {
-                                        self.map.update(parts[1], parts[4]);
-                                        stream.write_all("Value updated successfully!".as_bytes()).unwrap();
-                                    },
-                                    "DELETE" => {
-                                        self.map
-                                        .remove(parts[1]);
-                                        stream.write_all("Value deleted successfully!".as_bytes()).unwrap();
-                                    },
-                                    _ => println!("Unknown command")
+                                    None => {}
                                 }
-
-                                stream.write_all(b"OK\n").unwrap();
                             },
-                            Ok(_) => println!("[+] Client disconnected!"),
-                            Err(e) => println!("[-] Failed to read from connection: {}", e)
+                            Ok(_) => {
+                                println!("[+] Client disconnected!");
+                                break;
+                            },
+                            Err(e) => {
+                                println!("[-] Failed to read from connection: {}", e);
+                                break;
+                            }
                         }
                     }
                 },
