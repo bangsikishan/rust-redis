@@ -1,16 +1,18 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
+use std::thread::spawn;
 
 use crate::redis::Redis;
 
 pub struct Server {
-    map: Redis
+    map: Arc<Mutex<Redis>>
 }
 
 impl Server {
     pub fn new() -> Self {
         Self {
-            map: Redis::new()
+            map: Arc::new(Mutex::new(Redis::new()))
         }
     }
 
@@ -23,75 +25,86 @@ impl Server {
                 Ok(mut stream) => {
                     println!("[+] New connection established!");
 
-                    let mut reader = BufReader::new(stream.try_clone().unwrap());
-                    
-                    loop {
-                        let mut line = String::new();
+                    let arc = Arc::clone(&self.map);
 
-                        match reader.read_line(&mut line) {
-                            Ok(size) if size > 0 => {
-                                let msg = line.trim();
-                                
-                                if msg.is_empty() {
-                                    continue;
+                    spawn(move || {
+                        let mut reader = BufReader::new(stream.try_clone().unwrap());
+
+                        loop {
+                            let mut line = String::new();
+
+                            match reader.read_line(&mut line) {
+                                Ok(size) if size > 0 => {
+                                    let msg = line.trim();
+                                    
+                                    if msg.is_empty() {
+                                        continue;
+                                    }
+
+                                    println!("[+] Received: {}", msg);
+
+                                    let parts: Vec<&str> = msg.split_whitespace().collect();
+
+                                    match parts.get(0).map(|s| s.to_uppercase()) {
+                                        Some(cmd) => match cmd.as_str() {
+                                            "GET" => {
+                                                if let Some(key) = parts.get(1) {
+                                                    let response = {
+                                                        let store = arc.lock().unwrap();
+
+                                                        store
+                                                            .get(key)
+                                                            .map(|v| v.to_string())
+                                                            .unwrap_or_else(|| "No record found!".to_string())
+                                                    };
+                                                    
+                                                    let formatted = format!("{}\n", response);
+
+                                                    stream.write_all(formatted.as_bytes()).unwrap();
+                                                } else {
+                                                    stream.write_all("Error: Missing key\n".as_bytes()).unwrap();
+                                                }
+                                            },
+                                            "SET" => {
+                                                if let (Some(key), Some(value)) = (parts.get(1), parts.get(2)) {
+                                                    {
+                                                        let mut store = arc.lock().unwrap();
+                                                        store.set(key, value);
+                                                    }
+
+                                                    stream.write_all("Value added successfully!\n".as_bytes()).unwrap();
+                                                } else {
+                                                    stream.write_all("Error: Missing key or value\n".as_bytes()).unwrap();
+                                                }
+                                            },
+                                            "DELETE" => {
+                                                if let Some(key) = parts.get(1) {
+                                                    {
+                                                        let mut store = arc.lock().unwrap();
+                                                        store.remove(key);
+                                                    }
+
+                                                    stream.write_all("Value deleted successfully!\n".as_bytes()).unwrap();
+                                                } else {
+                                                    stream.write_all("Error: Missing key\n".as_bytes()).unwrap();
+                                                }
+                                            },
+                                            _ => stream.write_all("Unknown command\n".as_bytes()).unwrap()
+                                        },
+                                        None => {}
+                                    }
+                                },
+                                Ok(_) => {
+                                    println!("[+] Client disconnected!");
+                                    break;
+                                },
+                                Err(e) => {
+                                    println!("[-] Failed to read from connection: {}", e);
+                                    break;
                                 }
-
-                                println!("[+] Received: {}", msg);
-
-                                let parts: Vec<&str> = msg.split_whitespace().collect();
-                                
-                                match parts.get(0).map(|s| s.to_uppercase()) {
-                                    Some(cmd) => match cmd.as_str() {
-                                        "GET" => {
-                                            if let Some(key) = parts.get(1) {
-                                                let response = self.map
-                                                .get(key)
-                                                .map(|v| v.as_str())
-                                                .unwrap_or("No record found!");
-                                                
-                                                let formatted = format!("{}\n", response);
-
-                                                stream.write_all(formatted.as_bytes()).unwrap();
-                                            } else {
-                                                stream.write_all("Error: Missing key\n".as_bytes()).unwrap();
-                                            }
-                                        },
-                                        "SET" => {
-                                            if let (Some(key), Some(value)) = (parts.get(1), parts.get(2)) {
-                                                self.map.set(
-                                                    key,
-                                                    value
-                                                );
-
-                                                stream.write_all("Value added successfully!".as_bytes()).unwrap();
-                                            } else {
-                                                stream.write_all("Error: Missing key or value\n".as_bytes()).unwrap();
-                                            }
-                                        },
-                                        "DELETE" => {
-                                            if let Some(key) = parts.get(1) {
-                                                self.map.remove(key);
-
-                                                stream.write_all("Value deleted successfully!".as_bytes()).unwrap();
-                                            } else {
-                                                stream.write_all("Error: Missing key\n".as_bytes()).unwrap();
-                                            }
-                                        },
-                                        _ => stream.write_all("Unknown command".as_bytes()).unwrap()
-                                    },
-                                    None => {}
-                                }
-                            },
-                            Ok(_) => {
-                                println!("[+] Client disconnected!");
-                                break;
-                            },
-                            Err(e) => {
-                                println!("[-] Failed to read from connection: {}", e);
-                                break;
                             }
                         }
-                    }
+                    });
                 },
                 Err(e) => {
                     println!("[-] Connection failed: {}", e);
