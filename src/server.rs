@@ -2,6 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread::spawn;
+use std::fs;
 
 use crate::redis::Redis;
 
@@ -11,8 +12,23 @@ pub struct Server {
 
 impl Server {
     pub fn new() -> Self {
-        Self {
-            map: Arc::new(Mutex::new(Redis::new()))
+        match fs::read_to_string("database.db") {
+            Ok(data) => {
+                let mut redis = Redis::new();
+
+                for line in data.lines() {
+                    let mut parts = line.split(",");
+                    
+                    if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+                        redis.set(key, value);
+                    }
+                }
+
+                Self {
+                    map: Arc::new(Mutex::new(redis))
+                }
+            },
+            Err(_) => Self { map: Arc::new(Mutex::new(Redis::new())) }
         }
     }
 
@@ -70,6 +86,7 @@ impl Server {
                                                     {
                                                         let mut store = arc.lock().unwrap();
                                                         store.set(key, value);
+                                                        store.save_to_disk();
                                                     }
 
                                                     stream.write_all("Value added successfully!\n".as_bytes()).unwrap();
@@ -82,6 +99,7 @@ impl Server {
                                                     {
                                                         let mut store = arc.lock().unwrap();
                                                         store.remove(key);
+                                                        store.save_to_disk();
                                                     }
 
                                                     stream.write_all("Value deleted successfully!\n".as_bytes()).unwrap();
