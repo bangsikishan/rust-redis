@@ -17,9 +17,7 @@ impl Server {
                 let mut redis = Redis::new();
 
                 for line in data.lines() {
-                    let mut parts = line.split(",");
-                    
-                    if let (Some(key), Some(value)) = (parts.next(), parts.next()) {
+                    if let Some((key, value)) = line.split_once(",") {
                         redis.set(key, value);
                     }
                 }
